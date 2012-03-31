@@ -21,7 +21,14 @@ module Fony
     path[0, (path.length - (File.extname path).length)] << "." << ext
   end
   
+  def Fony.abs_path(path)
+    File.absolute_path (path.gsub "\\", "/")
+  end
+  
   def Fony.compile_project(project_file, config)
+    project_file = File.absolute_path project_file
+    project_dir = File.dirname project_file
+    Dir.chdir project_dir
     config ||= "Debug"
     # scrape options
     proj = REXML::Document.new (File.read project_file)
@@ -37,18 +44,18 @@ module Fony
     tailcalls = (group.get_elements "Tailcalls")[0]
     tailcalls = tailcalls ? tailcalls.text == "true" : false
     output_dir = (group.get_elements "OutputPath")[0].text.gsub "$(Configuration)", config
-    output_dir = File.absolute_path output_dir
+    output_dir = abs_path output_dir
     output_path = (File.join output_dir, asm_name) << "." << (target == "library" ? "dll" : "exe")
     define_constants = (group.get_elements "DefineConstants")[0]
     define_constants = define_constants ? (define_constants.text.split ";") : []
     warning_level = (group.get_elements "WarningLevel")[0]
     warning_level = warning_level ? warning_level.text.to_i : 3
     doc_file = (group.get_elements "DocumentationFile")[0]
-    doc_file = doc_file ? (File.absolute_path (doc_file.text.gsub "$(Configuration)", config)) : nil
+    doc_file = doc_file ? (abs_path (doc_file.text.gsub "$(Configuration)", config)) : nil
     refs = (proj.get_elements "/Project/ItemGroup/Reference").map do |ref|
       name = (ref.attribute "Include").to_s
       hint_path = (ref.get_elements "HintPath")[0]
-      hint_path = hint_path ? (File.absolute_path (hint_path.text.gsub "$(Configuration)", config)) : nil
+      hint_path = hint_path ? (abs_path (hint_path.text.gsub "$(Configuration)", config)) : nil
       private = (ref.get_elements "Private")[0]
       private = private ? private.text == "True" : false
       { :name => name, :hint_path => hint_path, :private => private }
@@ -70,7 +77,7 @@ module Fony
       "--reference:\"#{ref}\""
     end
     arg_refs = arg_refs.join " "
-    arg_sources = (sources.map {|s| File.absolute_path s }).join " "
+    arg_sources = (sources.map {|s| abs_path s }).join " "
     # build command
     cmd = @linux ? "fsharpc" : "fsc.exe"
     cmd << " --noframework"
