@@ -73,11 +73,17 @@ module Fony
     arg_warning_level = "--warn:#{warning_level}"
     arg_doc_file = doc_file ? "--doc:\"#{doc_file}\"" : ""
     arg_refs = refs.map do |ref|
-      ref = ref[:hint_path] ? ref[:hint_path] : ref[:name]
+      ref = ref[:hint_path] ? ref[:hint_path] : (ref[:name] << ".dll")
       "--reference:\"#{ref}\""
     end
     arg_refs = arg_refs.join " "
     arg_sources = (sources.map {|s| abs_path s }).join " "
+    # create output dir
+    if not(File.directory? output_dir)
+      cmd = @linux ? "mkdir -p " : "mkdir "
+      cmd = cmd << output_dir
+      puts `#{cmd}`
+    end
     # build command
     cmd = @linux ? "fsharpc" : "fsc.exe"
     cmd << " --noframework"
