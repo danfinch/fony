@@ -4,8 +4,9 @@ Fony is a tool for building F# projects, written in Ruby.
 Requirements:
   
   * Ruby
-  * On Linux, run the F# Cross Platform Tools installer (http://fsxplat.codeplex.com/)
-  * On Windows, fsc.exe must be in PATH
+  * fsc.exe must be in PATH
+  * Mono support planned
+
 
 License: Apache 2.0
 
