@@ -5,6 +5,7 @@ module Fony
   require "stringio"
   require "rexml/document"
   require "optparse"
+  require "ostruct"
   
   @linux = RUBY_PLATFORM.end_with? "linux"
   @windows = not(@linux)
@@ -25,12 +26,9 @@ module Fony
     File.absolute_path (path.gsub "\\", "/")
   end
   
-  def Fony.compile_project(project_file, config)
+  def Fony.read_project(project_file, config)
     project_file = File.absolute_path project_file
     project_dir = File.dirname project_file
-    Dir.chdir project_dir
-    config ||= "Debug"
-    # scrape options
     proj = REXML::Document.new (File.read project_file)
     target = (proj.get_elements "/Project/PropertyGroup/OutputType")[0].text.downcase
     asm_name = (proj.get_elements "/Project/PropertyGroup/AssemblyName")[0].text
@@ -62,26 +60,64 @@ module Fony
     end
     refs = refs.find_all {|r| r[:name] != "mscorlib" && r[:name] != "FSharp.Core" }
     sources = (proj.get_elements "/Project/ItemGroup/Compile").map { |c| (c.attribute "Include").to_s }
+    OpenStruct.new({
+      :project_file => project_file,
+      :project_dir => project_dir,
+      :config => config,
+      :target => target,
+      :asm_name => asm_name,
+      :debug_symbols => debug_symbols,
+      :debug_type => debug_type,
+      :optimize => optimize,
+      :tailcalls => tailcalls,
+      :output_dir => output_dir,
+      :output_path => output_path,
+      :define_constants => define_constants,
+      :warning_level => warning_level,
+      :doc_file => doc_file,
+      :refs => refs,
+      :sources => sources
+    })
+  end
+  
+  def Fony.copy_refs(proj, all_refs)
+    refs = proj.refs.find_all {|r| r[:hint_path] }
+    refs =
+      if all_refs
+        refs
+      else
+        refs.find_all {|r| r[:private] }
+      end
+    refs.each do |ref|
+      ref = ref[:hint_path]
+      copy_file ref, proj.output_dir
+      copy_file (change_ext ref, "pdb"), proj.output_dir
+      copy_file (change_ext ref, "xml"), proj.output_dir
+    end
+  end
+  
+  def Fony.compile_project(proj)
+    Dir.chdir proj.project_dir
     # build arguments
-    arg_output = "--out:\"#{output_path}\""
-    arg_target = "--target:#{target}"
-    arg_debug_symbols = "--debug" << (debug_symbols ? "+" : "-")
-    arg_debug_type = "--debug:#{debug_type}"
-    arg_optimize = "--optimize" << (optimize ? "+" : "-")
-    arg_tailcalls = "--tailcalls" << (tailcalls ? "+" : "-")
-    arg_define_constants = (define_constants.map {|c| "--define:#{c}" }).join " "
-    arg_warning_level = "--warn:#{warning_level}"
-    arg_doc_file = doc_file ? "--doc:\"#{doc_file}\"" : ""
-    arg_refs = refs.map do |ref|
+    arg_output = "--out:\"#{proj.output_path}\""
+    arg_target = "--target:#{proj.target}"
+    arg_debug_symbols = "--debug" << (proj.debug_symbols ? "+" : "-")
+    arg_debug_type = "--debug:#{proj.debug_type}"
+    arg_optimize = "--optimize" << (proj.optimize ? "+" : "-")
+    arg_tailcalls = "--tailcalls" << (proj.tailcalls ? "+" : "-")
+    arg_define_constants = (proj.define_constants.map {|c| "--define:#{c}" }).join " "
+    arg_warning_level = "--warn:#{proj.warning_level}"
+    arg_doc_file = proj.doc_file ? "--doc:\"#{proj.doc_file}\"" : ""
+    arg_refs = proj.refs.map do |ref|
       ref = ref[:hint_path] ? ref[:hint_path] : (ref[:name] << ".dll")
       "--reference:\"#{ref}\""
     end
     arg_refs = arg_refs.join " "
-    arg_sources = (sources.map {|s| abs_path s }).join " "
+    arg_sources = (proj.sources.map {|s| abs_path s }).join " "
     # create output dir
-    if not(File.directory? output_dir)
+    if not(File.directory? proj.output_dir)
       cmd = @linux ? "mkdir -p " : "mkdir "
-      cmd = cmd << output_dir
+      cmd = cmd << proj.output_dir
       puts `#{cmd}`
     end
     # build command
@@ -100,22 +136,28 @@ module Fony
     cmd << " #{arg_sources}"
     puts cmd
     puts `#{cmd}`
-    # copy references
-    refs = refs.find_all {|r| r[:private] }
-    refs.each do |ref|
-      ref = ref[:hint_path]
-      copy_file ref, output_dir
-      copy_file (change_ext ref, "pdb"), output_dir
-      copy_file (change_ext ref, "xml"), output_dir
-    end
   end
   
   def Fony.cmd_fony
-    options = {}
+    options = OpenStruct.new
+    options.config = "Debug"
+    options.compile = true
+    options.all_refs = false
+    options.info = false
     parser = OptionParser.new do |ops|
       ops.banner = "Usage: fony [options] <projectfile1> [<projectfile2>...]"
       ops.on("-c", "--config CONFIG", "Use the specific configuration (default: Debug)") do |config|
-        options[:config] = config
+        options.config = config
+      end
+      ops.on("-r", "--references", "Copy all non-GAC references to output directory.") do
+        options.all_refs = true
+      end
+      ops.on("-n", "--nocompile", "Skip compilation.") do
+        options.compile = false
+      end
+      ops.on("-i", "--info", "Display project information only, do not compile.") do
+        options.info = true
+        options.compile = false
       end
       ops.on("-h", "--help", "Display this screen") do
         puts ops
@@ -124,7 +166,16 @@ module Fony
     end
     parser.parse!
     ARGV.each do |project_file|
-      compile_project project_file, options[:config]
+      proj = read_project project_file, options.config
+      if options.compile
+        compile_project proj
+        copy_refs proj, options.all_refs
+      elsif options.all_refs
+        copy_refs proj, true
+      end
+      if options.info
+        puts proj
+      end
     end
   end  
 
