@@ -22,8 +22,10 @@ module Fony
     path[0, (path.length - (File.extname path).length)] << "." << ext
   end
   
-  def Fony.abs_path(path)
-    File.absolute_path (path.gsub "\\", "/")
+  def Fony.abs_path(path, project_dir, config)
+    path = (path.gsub "\\", "/").gsub "$(Configuration)", config
+    path = File.join project_dir, path
+    File.absolute_path path
   end
   
   def Fony.read_project(project_file, config)
@@ -41,19 +43,19 @@ module Fony
     optimize = optimize ? optimize.text == "true" : false
     tailcalls = (group.get_elements "Tailcalls")[0]
     tailcalls = tailcalls ? tailcalls.text == "true" : false
-    output_dir = (group.get_elements "OutputPath")[0].text.gsub "$(Configuration)", config
-    output_dir = abs_path output_dir
+    output_dir = (group.get_elements "OutputPath")[0].text
+    output_dir = abs_path output_dir, project_dir, config
     output_path = (File.join output_dir, asm_name) << "." << (target == "library" ? "dll" : "exe")
     define_constants = (group.get_elements "DefineConstants")[0]
     define_constants = define_constants ? (define_constants.text.split ";") : []
     warning_level = (group.get_elements "WarningLevel")[0]
     warning_level = warning_level ? warning_level.text.to_i : 3
     doc_file = (group.get_elements "DocumentationFile")[0]
-    doc_file = doc_file ? (abs_path (doc_file.text.gsub "$(Configuration)", config)) : nil
+    doc_file = doc_file ? (abs_path doc_file.text, project_dir, config) : nil
     refs = (proj.get_elements "/Project/ItemGroup/Reference").map do |ref|
       name = (ref.attribute "Include").to_s
       hint_path = (ref.get_elements "HintPath")[0]
-      hint_path = hint_path ? (abs_path (hint_path.text.gsub "$(Configuration)", config)) : nil
+      hint_path = hint_path ? (abs_path hint_path.text, project_dir, config) : nil
       private = (ref.get_elements "Private")[0]
       private = private ? private.text == "True" : false
       { :name => name, :hint_path => hint_path, :private => private }
@@ -97,7 +99,6 @@ module Fony
   end
   
   def Fony.compile_project(proj)
-    Dir.chdir proj.project_dir
     # build arguments
     arg_output = "--out:\"#{proj.output_path}\""
     arg_target = "--target:#{proj.target}"
@@ -113,7 +114,7 @@ module Fony
       "--reference:\"#{ref}\""
     end
     arg_refs = arg_refs.join " "
-    arg_sources = (proj.sources.map {|s| abs_path s }).join " "
+    arg_sources = (proj.sources.map {|s| abs_path s, proj.project_dir, proj.config }).join " "
     # create output dir
     if not(File.directory? proj.output_dir)
       cmd = @linux ? "mkdir -p " : "mkdir "
@@ -167,6 +168,7 @@ module Fony
     parser.parse!
     ARGV.each do |project_file|
       proj = read_project project_file, options.config
+      Dir.chdir proj.project_dir
       if options.compile
         compile_project proj
         copy_refs proj, options.all_refs
